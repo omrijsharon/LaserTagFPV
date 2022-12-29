@@ -1,44 +1,15 @@
-/*
- *  MinimalReceiver.cpp
- *
- *  Small memory footprint and no timer usage!
- *
- *  Receives IR protocol data of NEC protocol using pin change interrupts.
- *  On complete received IR command the function handleReceivedIRData(uint16_t aAddress, uint8_t aCommand, uint8_t aFlags)
- *  is called in Interrupt context but with interrupts being enabled to enable use of delay() etc.
- *  !!!!!!!!!!!!!!!!!!!!!!
- *  Functions called in interrupt context should be running as short as possible,
- *  so if you require longer action, save the data (address + command) and handle it in the main loop.
- *  !!!!!!!!!!!!!!!!!!!!!
- *
- *
- *  Copyright (C) 2020-2022  Armin Joachimsmeyer
- *  armin.joachimsmeyer@gmail.com
- *
- *  This file is part of IRMP https://github.com/IRMP-org/IRMP.
- *  This file is part of Arduino-IRremote https://github.com/Arduino-IRremote/Arduino-IRremote.
- *
- *  MinimalReceiver is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
- *
- */
-
 #include <Arduino.h>
 #include "MSP.h"
 
 MSP msp;
 unsigned long start_time;
-char craft_name[9];
+unsigned long total_time;
+unsigned long lap_times[3] = {0, 0, 0};
+unsigned long best_time;
+unsigned long best_lap;
+char craft_name[10];
+int laps;
+
 
 /*
  * Set sensible receive pin for different CPU's
@@ -107,21 +78,68 @@ void setup() {
 #else
     Serial.println(F("Ready to receive NEC IR signals at pin " STR(IR_INPUT_PIN)));
 #endif
-  start_time = millis();
+  laps=0;
+  total_time = 0;
+  msp.command(MSP_SET_NAME, craft_name, 10, false);
+  sprintf(craft_name, "0-00:00.000");
+  // msp.command(MSP_SET_NAME, craft_name, 10, false);
+  Serial.println(craft_name);  
 }
 
 void loop() {
-  unsigned long elapsed_time = millis() - start_time;
-  int minutes = elapsed_time / 60000;
-  int seconds = (elapsed_time / 1000) % 60;
-  int milliseconds = elapsed_time % 1000;
-  if (milliseconds%(100+random(25)) == 0){
-      // Update the craft_name variable with the elapsed time in the desired format
-      sprintf(craft_name, "%02d:%02d.%03d", minutes, seconds, milliseconds);
-      if (seconds > 2) {
-        msp.command(MSP_SET_NAME, craft_name, 10, false);
-        // Serial.println(craft_name);  
-      }
+  if (laps>0){
+    unsigned long elapsed_time = millis() - start_time;
+    int minutes = elapsed_time / 60000;
+    int seconds = (elapsed_time / 1000) % 60;
+    int milliseconds = elapsed_time % 1000;
+    if (milliseconds%(100+random(25)) == 0){
+        if (laps==1) {
+          sprintf(craft_name, "%01d-%02d:%02d.%02d", laps, minutes, seconds, milliseconds);
+        // msp.command(MSP_SET_NAME, craft_name, 10, false);
+          Serial.println(craft_name);  
+        }
+        else if (laps<=3) {
+          sprintf(craft_name, "%01d-%02d:%02d.%02d", laps, minutes, seconds, milliseconds);
+          if (seconds > 2) {
+            // msp.command(MSP_SET_NAME, craft_name, 10, false);
+            Serial.println(craft_name);  
+          }
+        }
+        else if (laps==4){
+          // msp.command(MSP_SET_NAME, craft_name, 10, false);
+          Serial.println(craft_name); 
+          delay(3000);
+          laps += 1;
+        }
+        else if (laps==5){
+          minutes = total_time / 60000;
+          seconds = (total_time / 1000) % 60;
+          milliseconds = total_time % 1000;
+          sprintf(craft_name, "%02d:%02d.%02d", minutes, seconds, milliseconds);
+          // msp.command(MSP_SET_NAME, craft_name, 10, false);
+          Serial.println(craft_name); 
+          laps += 1;
+          delay(1000);
+        }
+        else if (laps==6){
+          best_time = lap_times[0];
+          best_lap = 1;
+          for (int i=1; i<3; i++){
+            if (lap_times[i] < best_time) {
+              best_time = lap_times[i];
+              best_lap = i+1;
+            }
+          }
+          minutes = best_time / 60000;
+          seconds = (best_time / 1000) % 60;
+          milliseconds = best_time % 1000;
+          sprintf(craft_name, "%01d-%02d:%02d.%02d", best_lap, minutes, seconds, milliseconds);
+          // msp.command(MSP_SET_NAME, craft_name, 10, false);
+          Serial.println(craft_name); 
+          laps += -1;
+          delay(1000);
+        }
+    }
   }
   
     if (sCallbackData.justWritten) {
@@ -179,9 +197,18 @@ void handleReceivedTinyIRData(uint8_t aAddress, uint8_t aCommand, uint8_t aFlags
 #  if defined(USE_FAST_8_BIT_AND_PARITY_TIMING)
     printTinyReceiverResultMinimal(aCommand, aFlags, &Serial);
 #  else
-    unsigned long elapsed_time = millis() - start_time;
-    if (elapsed_time > 2000) {
+    if (laps==0){
       start_time = millis();
+      laps = 1;
+    }
+    else if (laps<=3) {
+      unsigned long elapsed_time = millis() - start_time;
+      if (elapsed_time > 5000) {
+        lap_times[laps-1] = elapsed_time;
+        start_time = millis();
+        laps +=1;
+        total_time += elapsed_time;
+      }
     }
     // printTinyReceiverResultMinimal(aAddress, aCommand, aFlags, &Serial);
 #  endif
